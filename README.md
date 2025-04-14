@@ -1,4 +1,4 @@
-# redwood-84
+# redwood-84 *IN ACTIVE DEVELOPMENT - UNFINISHED*
 Python based desktop app for quantum-proof encryption/decryption of .txt files.
 Login verification and retrieving keys is done via Supabase.
 Application is written using Customtkinter.
