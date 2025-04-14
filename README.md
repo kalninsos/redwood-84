@@ -1,5 +1,6 @@
 # redwood-84 *IN ACTIVE DEVELOPMENT - UNFINISHED*
-Python based desktop app for quantum-proof encryption/decryption of .txt files.
+Python based desktop app for quantum-resistant encryption/decryption of .txt files.
+Encryption is 128bit AES.
 Login verification and retrieving keys is done via Supabase.
 Application is written using Customtkinter.
 
