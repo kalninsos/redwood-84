@@ -26,17 +26,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptio
     )
 )
 
-#inserting values into our table
-#supabase.table("login_details").insert({"email": "avalidemail@email.com", "public_key" : "38902183920183921"}).execute()
-
-#for signing up new users MAKE SURE TO CHANGE EMAIL AAAAANDDDD PASSWORD THANK YOU!!!
-# response = supabase.auth.sign_up(
-#     {
-#         "email": "avalidemail@email.com",
-#         "password": "goodpassword",
-#     }
-# )
-
 class loginFrame(customtkinter.CTkFrame):
     def __init__(self, master, switch_callback):
         super().__init__(master)
