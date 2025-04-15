@@ -20,6 +20,9 @@ from cryptography.hazmat.primitives.serialization import load_der_public_key
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 #todo list
+#write encrypted message to a text file for the user
+#write decrypted message to a text file for the user
+#package all of the code into a single executable
 
 username = ""
 password = ""
@@ -72,6 +75,7 @@ class loginFrame(customtkinter.CTkFrame):
             if response:
                 print("Login Successful!")
 
+                #query the whole row for the logged in user (via email)
                 response2 = (supabase.table('keys')
                              .select("email", "public_key")
                              .eq("email",email)
@@ -109,7 +113,8 @@ class loginFrame(customtkinter.CTkFrame):
                             .eq("email", email)
                             .execute()
                             )
-                        
+                    
+                    #public key is not default
                     else:
                         print("User has valid public key.")
                         global s_public_key
@@ -120,7 +125,7 @@ class loginFrame(customtkinter.CTkFrame):
                              .execute()
                         )
                         if response:
-                            public_b64 = response.data[0]['public_key']
+                            public_b64 = response.data[0]['public_key'] #grab public key for logged in user
                             public_der = base64.b64decode(public_b64)
                             s_public_key = load_der_public_key(public_der)
             
@@ -141,6 +146,7 @@ class loginFrame(customtkinter.CTkFrame):
         email = ""
         hashed_user = hashlib.sha256(username.encode('utf-8')).hexdigest()
         
+        #see if the (hashed) username is in our table
         response = (supabase.table('keys')
                          .select("hashed_user", "email")
                          .eq("hashed_user",hashed_user)
@@ -150,8 +156,8 @@ class loginFrame(customtkinter.CTkFrame):
         if not response.data:
             print("Invalid Username.")
             self.incorrect_details.grid(row = 0, column = 1, padx = 20, pady = 20)
-        else:
-            print(response.data[0]["email"])
+        else: #username is valid
+            #print(response.data[0]["email"])
             email = response.data[0]["email"]
             self.login(email, password)
 
@@ -184,7 +190,8 @@ class recipientUsernameFrame(customtkinter.CTkFrame):
                 can_preform_action = False
                 print("Invalid recipient. Please check the spelling of your recipient.")
                 self.warning_text.configure(text="Invalid recipient. Please check the spelling of your recipient.")
-            else:
+
+            else: #if hashed recipient DOES exist
                 #query the keys of the person we want to encrypt for/decrypt from
                 response2 = (supabase.table('keys')
                              .select("hashed_user", "public_key")
@@ -198,6 +205,8 @@ class recipientUsernameFrame(customtkinter.CTkFrame):
                         has_keys = False
                         print("User has not logged in before. Please ask them to login, then retry.")
                         self.warning_text.configure(text="User has not logged in before. Please ask them to login, then retry.")
+                    
+                    #if public key is already established, retrieve public key for that user (friend we are decrypting to/from)
                     else:
                         global friend_public_key
                         public_b64 = response2.data[0]['public_key']
@@ -240,10 +249,11 @@ class mainProgramFrame(customtkinter.CTkFrame):
         self.switch_callback() #reveal "enter recipient username" frame
     
     def derive_key(self):
-        #s_public_key
+        #retrieve private key from .pem file
         with open("my_dh_private_key.pem", "rb") as f:
             private_key = load_pem_private_key(f.read(), password=password.encode())
         
+        #derive shared key
         self_shared_key = private_key.exchange(friend_public_key)
         derived_key = HKDF(
             algorithm=hashes.SHA256(),
@@ -268,7 +278,7 @@ class mainProgramFrame(customtkinter.CTkFrame):
             print(f"encrypted data: {encrypted_data}")
 
         if can_preform_action == False:
-            print('CPF is False for some reason')
+            print('CPF is False, likely an invalid friend user')
 
     def decrypt(self):
         global data
