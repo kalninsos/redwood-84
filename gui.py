@@ -6,14 +6,33 @@ from supabase import AuthApiError, create_client, Client
 from supabase.client import ClientOptions
 from dotenv import load_dotenv
 from PIL import Image #for using a picture as a background
+import base64
 
 from encryption import AES_Encrypt
 from decryption import AES_Decrypt
+from parameters import p, g
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import dh
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import load_der_public_key
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+#todo list
 
 username = ""
+password = ""
 person_to_or_from = ""
-can_preform_action = False
 data = ""
+s_public_key = ""
+friend_public_key = ""
+can_preform_action = False
+has_keys = False
+
+pn = dh.DHParameterNumbers(p, g)
+parameters = pn.parameters()
+
 #loading .env file and retrieving supabase url + apikey
 load_dotenv()
 SUPABASE_URL=os.getenv('SUPABASE_URL')
@@ -61,10 +80,50 @@ class loginFrame(customtkinter.CTkFrame):
 
                 if response2:
                     #if public key is default:
-                    if response2.data[0]['public_key'] == 1111:
+                    if response2.data[0]['public_key'] == "1111":
                         print("USER HAS DEFAULT PUBLIC KEY. RUN PUBLIC / PRIVATE KEY GENERATION FUNCTION.")
+                        self_private_key = parameters.generate_private_key()
+
+                        #write private key to a .pem file
+                        with open("my_dh_private_key.pem", "wb") as f:
+                            f.write(self_private_key.private_bytes(
+                            encoding=serialization.Encoding.PEM,
+                            format=serialization.PrivateFormat.PKCS8,
+                            encryption_algorithm=serialization.BestAvailableEncryption(password.encode())
+                            ))
+
+                        self_public_key = self_private_key.public_key()
+                        
+                        #encoding public key
+                        public_der = self_public_key.public_bytes(
+                            encoding=serialization.Encoding.DER,
+                            format=serialization.PublicFormat.SubjectPublicKeyInfo
+                        )
+
+                        public_b64 = base64.b64encode(public_der).decode("utf-8")
+                        #writing public key to database
+                        print("attempting to write ", public_b64)
+                        response = (
+                            supabase.table("keys")
+                            .update({"public_key": public_b64})
+                            .eq("email", email)
+                            .execute()
+                            )
+                        
                     else:
                         print("User has valid public key.")
+                        global s_public_key
+
+                        response = (supabase.table('keys')
+                             .select("email", "public_key")
+                             .eq("email",email)
+                             .execute()
+                        )
+                        if response:
+                            public_b64 = response.data[0]['public_key']
+                            public_der = base64.b64decode(public_b64)
+                            s_public_key = load_der_public_key(public_der)
+            
                 else:
                     print("Attempting to retrieve keys for check failed.")
                 self.switch_callback() #this switches us to the login panel 
@@ -76,6 +135,7 @@ class loginFrame(customtkinter.CTkFrame):
  
     def hashAndTestEmail(self):
         global username
+        global password
         username = self.username_textbox.get()
         password = self.password_textbox.get()
         email = ""
@@ -94,23 +154,6 @@ class loginFrame(customtkinter.CTkFrame):
             print(response.data[0]["email"])
             email = response.data[0]["email"]
             self.login(email, password)
-        
-        #below is deprecated
-        # login_details=os.getenv('DETAILS')
-        # key_value_pairs = re.findall(r'(?:[^\s,"]|"(?:\\.|[^"])*")+', login_details)
-
-        # for key_value_pair in key_value_pairs:
-        #     key, value = key_value_pair.split("=")
-        #     if hashed_user == key:
-        #         email = value
-        #         login_successful = True
-        #         self.login(email, password)
-        #         break
-        #     elif hashed_user != key:
-        #         login_successful == False
-        # if login_successful == False:
-        #     print('no matches found, login unsuccessful.')
-        # print(f'our email is: {email} our username is: {username} and our password is: {password}')
 
 class recipientUsernameFrame(customtkinter.CTkFrame):
     def __init__(self, master):
@@ -136,16 +179,36 @@ class recipientUsernameFrame(customtkinter.CTkFrame):
         )
 
         if response:
-            global person_to_or_from, can_preform_action
+            global person_to_or_from, can_preform_action, has_keys
             if not response.data: #if hashed recipient doesn't exist
                 can_preform_action = False
                 print("Invalid recipient. Please check the spelling of your recipient.")
                 self.warning_text.configure(text="Invalid recipient. Please check the spelling of your recipient.")
             else:
-                person_to_or_from = recipient
-                can_preform_action = True
-                print("Recipient is verified. Proceed with Encryption.")
-                self.warning_text.configure(text="Recipient is verified. Proceed with encryption.")
+                #query the keys of the person we want to encrypt for/decrypt from
+                response2 = (supabase.table('keys')
+                             .select("hashed_user", "public_key")
+                             .eq("hashed_user", hashed_recipient)
+                             .execute()
+                )
+
+                if response2:
+                    #if public key is default:
+                    if response2.data[0]['public_key'] == "1111":
+                        has_keys = False
+                        print("User has not logged in before. Please ask them to login, then retry.")
+                        self.warning_text.configure(text="User has not logged in before. Please ask them to login, then retry.")
+                    else:
+                        global friend_public_key
+                        public_b64 = response2.data[0]['public_key']
+                        public_der = base64.b64decode(public_b64)
+                        friend_public_key = load_der_public_key(public_der)
+                        print("User is verified. Proceed with encryption.")
+                        self.warning_text.configure(text="User is verified. Proceed with encryption.")
+                        person_to_or_from = recipient
+                        can_preform_action = True
+                else:
+                    print("Attempting to retrieve keys for check failed.")
 
 class mainProgramFrame(customtkinter.CTkFrame):
     def __init__(self, master, switch_callback):
@@ -175,6 +238,22 @@ class mainProgramFrame(customtkinter.CTkFrame):
             data = file.read().replace('\n', ' ')
 
         self.switch_callback() #reveal "enter recipient username" frame
+    
+    def derive_key(self):
+        #s_public_key
+        with open("my_dh_private_key.pem", "rb") as f:
+            private_key = load_pem_private_key(f.read(), password=password.encode())
+        
+        self_shared_key = private_key.exchange(friend_public_key)
+        derived_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b'handshake data',
+        ).derive(self_shared_key)
+        derived_key = derived_key.hex()[0:32] #only need 16 bytes for AES128, so take the first 16
+
+        return derived_key
         
     def encrypt(self):
         global data
@@ -182,8 +261,10 @@ class mainProgramFrame(customtkinter.CTkFrame):
         if can_preform_action == True:
             print('User chose to encrypt!')
             #retrieve shared key from Supabase and then derive the actual key we can use
-            key = '2b7e151628aed2a6abf7158809cf4f3c'
-            encrypted_data = AES_Encrypt(data, key)
+            d_key = self.derive_key()
+            print("Our derived key is: ", d_key)
+
+            encrypted_data = AES_Encrypt(data, d_key)
             print(f"encrypted data: {encrypted_data}")
 
         if can_preform_action == False:
@@ -195,8 +276,9 @@ class mainProgramFrame(customtkinter.CTkFrame):
         if can_preform_action == True:
             print('User chose to decrypt!')
             #retrieve shared key from Supabase and then derive the actual key we can use
-            key = '2b7e151628aed2a6abf7158809cf4f3c'
-            decrypted_data = AES_Decrypt(data, key)
+            d_key = self.derive_key()
+            print("Our derived key is: ", d_key)
+            decrypted_data = AES_Decrypt(data, d_key)
             print(f"Our decrypted data is: {decrypted_data}")
 
         if can_preform_action == False:
