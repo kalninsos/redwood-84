@@ -10,6 +10,7 @@ import base64
 
 from encryption import AES_Encrypt
 from decryption import AES_Decrypt
+from lookup_tables import trim_bafo
 from parameters import p, g
 
 from cryptography.hazmat.primitives import hashes
@@ -20,8 +21,8 @@ from cryptography.hazmat.primitives.serialization import load_der_public_key
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 #todo list
-#write encrypted message to a text file for the user
-#write decrypted message to a text file for the user
+#chop padding letters off of final decrypted message
+#allow multiple encryptions/decryptions in once instance
 #package all of the code into a single executable
 
 username = ""
@@ -212,8 +213,8 @@ class recipientUsernameFrame(customtkinter.CTkFrame):
                         public_b64 = response2.data[0]['public_key']
                         public_der = base64.b64decode(public_b64)
                         friend_public_key = load_der_public_key(public_der)
-                        print("User is verified. Proceed with encryption.")
-                        self.warning_text.configure(text="User is verified. Proceed with encryption.")
+                        print("User is verified. Proceed with e/d")
+                        self.warning_text.configure(text="User is verified. Proceed with encryption or decryption.")
                         person_to_or_from = recipient
                         can_preform_action = True
                 else:
@@ -228,15 +229,17 @@ class mainProgramFrame(customtkinter.CTkFrame):
         self.welcome_label = customtkinter.CTkLabel(self, text=f"Welcome, {username}. Please load a text file to begin.")
         self.welcome_label.grid(row = 0, column = 1)
 
-        self.loadfile_button = customtkinter.CTkButton(self, width = 150, height = 20, text="Load Text File", command=self.loadFile) #currently no command
+        self.loadfile_button = customtkinter.CTkButton(self, width = 150, height = 20, text="Load Text File", command=self.loadFile)
         self.loadfile_button.grid(row = 1, column = 0, padx = 20, pady = 20)
 
-        self.encrypt_button = customtkinter.CTkButton(self, width = 150, height = 20, text="Encrypt a File", command=self.encrypt) #currently no command
+        self.encrypt_button = customtkinter.CTkButton(self, width = 150, height = 20, text="Encrypt a File", command=self.encrypt) 
         self.encrypt_button.grid(row = 1, column = 1, padx = 20, pady = 20)
 
-        self.decrypt_button = customtkinter.CTkButton(self, width = 150, height = 20, text="Decrypt a File", command=self.decrypt) #currently no command
+        self.decrypt_button = customtkinter.CTkButton(self, width = 150, height = 20, text="Decrypt a File", command=self.decrypt)
         self.decrypt_button.grid(row = 1, column = 2, padx = 20, pady = 20)
-    
+
+        self.alert = customtkinter.CTkLabel(self, text=f"Placeholder text for Encryption/Decryption Success or failure")
+
     def loadFile(self):
         global data
         print('User is loading file...')
@@ -276,6 +279,10 @@ class mainProgramFrame(customtkinter.CTkFrame):
 
             encrypted_data = AES_Encrypt(data, d_key)
             print(f"encrypted data: {encrypted_data}")
+            with open("encrypted.txt", "w") as file:
+                file.write(encrypted_data)
+            
+            self.action_result("encrypted.txt", "encrypt")
 
         if can_preform_action == False:
             print('CPF is False, likely an invalid friend user')
@@ -288,13 +295,37 @@ class mainProgramFrame(customtkinter.CTkFrame):
             #retrieve shared key from Supabase and then derive the actual key we can use
             d_key = self.derive_key()
             print("Our derived key is: ", d_key)
-            decrypted_data = AES_Decrypt(data, d_key)
-            print(f"Our decrypted data is: {decrypted_data}")
+
+            chop_char = data[-1] #character representing the amount to chop
+            decrypted_data = AES_Decrypt(data[:-1], d_key) #pass through the whole string (except the last char, that corresponds to amt to chop)
+            decrypted_data = self.chop_padding(decrypted_data, chop_char)
+
+            with open("decrypted.txt", "w") as file:
+                file.write(decrypted_data)
+            
+            self.action_result("decrypted.txt", "decrypt")
 
         if can_preform_action == False:
             print("Cannot encrypt, user to encrypt to/from is invalid.")
-
-
+    
+    def action_result(self, filename, operation):
+        try:
+            with open(filename, "r") as file:
+                self.alert.configure(text=f"{operation}ion succeded, file: {filename}")
+                self.alert.grid(row = 2, column = 1)
+        except:
+            FileNotFoundError
+            self.alert.configure(text=f"{operation}ion failed.")
+            self.alert.grid(row = 2, column = 1)
+    
+    def chop_padding(self, text, amount_to_chop):
+        if amount_to_chop == 'a': #no chopping required
+            return text
+        else:
+            chop_amount = trim_bafo.index(amount_to_chop) #use lookup table to find amt to chop (amt is the index)
+            text = text[:-chop_amount]
+            return text
+            
 class App(customtkinter.CTk):
     def __init__(self):
         super().__init__()
