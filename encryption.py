@@ -5,6 +5,8 @@ from shared_funcs import *
 import random
 import string
 
+padding_amt = 16
+
 def sub_bytes(corpus):
     for i in range(len(corpus)):
         corpus[i] = sbox[corpus[i]]
@@ -86,6 +88,8 @@ def split_to_16_bytes(plaintext):
         remaining_length -= 16
 
     if remaining_length < 16 and remaining_length > 0:
+        global padding_amt
+        padding_amt = remaining_length
         padded_message = plaintext[i:len(plaintext)]
         while remaining_length != 16 and remaining_length > 0:
             padded_message = padded_message + random.choice(string.ascii_letters)
@@ -136,7 +140,9 @@ def AES_Encrypt(plaintext, key):
         add_round_key(chunk, expanded_key[160:176])
 
         encrypted_string = encrypted_string + chunk_to_str(chunk)
-
+    
+    global padding_amt
+    encrypted_string = encrypted_string + (trim_bafo[16 - padding_amt])
     return encrypted_string
 
 #for testing
