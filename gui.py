@@ -1,12 +1,14 @@
 import customtkinter
 from customtkinter import filedialog
 import os
+import sys
 import hashlib #to hash our usernames
 from supabase import AuthApiError, create_client, Client
 from supabase.client import ClientOptions
 from dotenv import load_dotenv
 from PIL import Image #for using a picture as a background
 import base64
+import time
 
 from encryption import AES_Encrypt
 from decryption import AES_Decrypt
@@ -20,28 +22,40 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import load_der_public_key
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-#todo list
-#chop padding letters off of final decrypted message
-#allow multiple encryptions/decryptions in once instance
-#package all of the code into a single executable
-
 username = ""
 password = ""
 person_to_or_from = ""
 data = ""
 s_public_key = ""
 friend_public_key = ""
+first_action = True
 can_preform_action = False
 has_keys = False
 
 pn = dh.DHParameterNumbers(p, g)
 parameters = pn.parameters()
 
+#get absolute path (needed when bundled into an executable)
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS  # PyInstaller temporary folder
+    except AttributeError:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+theme_path = resource_path("marsh.json")
+env_path = resource_path(".env")
+
 #loading .env file and retrieving supabase url + apikey
-load_dotenv()
+load_dotenv(env_path)
 SUPABASE_URL=os.getenv('SUPABASE_URL')
 SUPABASE_KEY=os.getenv('SUPABASE_KEY')
 
+customtkinter.set_appearance_mode("Dark")  # Modes: "System" (standard), "Dark", "Light"
+customtkinter.set_default_color_theme(theme_path)
+
+# connect to supabse
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(
         postgrest_client_timeout=5,
         storage_client_timeout=5,
@@ -49,6 +63,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptio
     )
 )
 
+# Frame and functions for login
 class loginFrame(customtkinter.CTkFrame):
     def __init__(self, master, switch_callback):
         super().__init__(master)
@@ -66,7 +81,9 @@ class loginFrame(customtkinter.CTkFrame):
         self.login_button.grid(row = 3, column = 1, padx = 20, pady = 20)
 
     def login(self, email, password):
+        global s_public_key
         try:
+            # Try to login
             response = supabase.auth.sign_in_with_password(
                 {
                 "email": email, 
@@ -84,29 +101,31 @@ class loginFrame(customtkinter.CTkFrame):
                 )
 
                 if response2:
-                    #if public key is default:
+                    # If public key is default and a real one hasn;t yet been created, created it below:
                     if response2.data[0]['public_key'] == "1111":
                         print("USER HAS DEFAULT PUBLIC KEY. RUN PUBLIC / PRIVATE KEY GENERATION FUNCTION.")
                         self_private_key = parameters.generate_private_key()
 
-                        #write private key to a .pem file
+                        # Write private key to a .pem file
                         with open("my_dh_private_key.pem", "wb") as f:
                             f.write(self_private_key.private_bytes(
                             encoding=serialization.Encoding.PEM,
                             format=serialization.PrivateFormat.PKCS8,
                             encryption_algorithm=serialization.BestAvailableEncryption(password.encode())
                             ))
-
-                        self_public_key = self_private_key.public_key()
                         
-                        #encoding public key
-                        public_der = self_public_key.public_bytes(
+                        # s_public_key is used for encryption later on, so we store it once we generate it
+                        s_public_key = self_private_key.public_key()
+                        
+                        # Encoding public key for storage
+                        public_der = s_public_key.public_bytes(
                             encoding=serialization.Encoding.DER,
                             format=serialization.PublicFormat.SubjectPublicKeyInfo
                         )
 
                         public_b64 = base64.b64encode(public_der).decode("utf-8")
-                        #writing public key to database
+
+                        # Writing public key to database
                         print("attempting to write ", public_b64)
                         response = (
                             supabase.table("keys")
@@ -114,21 +133,25 @@ class loginFrame(customtkinter.CTkFrame):
                             .eq("email", email)
                             .execute()
                             )
+                        
+                        self.switch_callback()
+                        return response
                     
-                    #public key is not default
+                    # If public key is not default (i.e. user has a public key that has been generated already)
                     else:
                         print("User has valid public key.")
-                        global s_public_key
 
+                        # Query table
                         response = (supabase.table('keys')
                              .select("email", "public_key")
                              .eq("email",email)
                              .execute()
                         )
+                        # Get public key from table for our user
                         if response:
                             public_b64 = response.data[0]['public_key'] #grab public key for logged in user
                             public_der = base64.b64decode(public_b64)
-                            s_public_key = load_der_public_key(public_der)
+                            s_public_key = load_der_public_key(public_der) # Decode key
             
                 else:
                     print("Attempting to retrieve keys for check failed.")
@@ -140,28 +163,31 @@ class loginFrame(customtkinter.CTkFrame):
             self.incorrect_details.grid(row = 0, column = 1, padx = 20, pady = 20)   
  
     def hashAndTestEmail(self):
-        global username
-        global password
+        global username, password
+
         username = self.username_textbox.get()
         password = self.password_textbox.get()
         email = ""
         hashed_user = hashlib.sha256(username.encode('utf-8')).hexdigest()
         
-        #see if the (hashed) username is in our table
+        # See if the (hashed) username is in our table
         response = (supabase.table('keys')
                          .select("hashed_user", "email")
                          .eq("hashed_user",hashed_user)
                          .execute()
         )
 
+        # Username invalid
         if not response.data:
             print("Invalid Username.")
             self.incorrect_details.grid(row = 0, column = 1, padx = 20, pady = 20)
-        else: #username is valid
-            #print(response.data[0]["email"])
+       
+        # Username is valid
+        else:
             email = response.data[0]["email"]
             self.login(email, password)
 
+# Frame we display to make sure user enters name of sender/recipient of message
 class recipientUsernameFrame(customtkinter.CTkFrame):
     def __init__(self, master):
         super().__init__(master)
@@ -177,8 +203,9 @@ class recipientUsernameFrame(customtkinter.CTkFrame):
     def retrieveRecipientUsername(self):
         recipient = self.recipient_username_textbox.get()
         print(f"Recipient is: {recipient}")
-        hashed_recipient = hashlib.sha256(recipient.encode('utf-8')).hexdigest()
+        hashed_recipient = hashlib.sha256(recipient.encode('utf-8')).hexdigest() # Hash the username
 
+        # See if that username is valud
         response = (supabase.table('keys')
                          .select("hashed_user")
                          .eq("hashed_user",hashed_recipient)
@@ -187,13 +214,15 @@ class recipientUsernameFrame(customtkinter.CTkFrame):
 
         if response:
             global person_to_or_from, can_preform_action, has_keys
-            if not response.data: #if hashed recipient doesn't exist
+            # If it is NOT a valid username, error text
+            if not response.data: 
                 can_preform_action = False
                 print("Invalid recipient. Please check the spelling of your recipient.")
                 self.warning_text.configure(text="Invalid recipient. Please check the spelling of your recipient.")
 
-            else: #if hashed recipient DOES exist
-                #query the keys of the person we want to encrypt for/decrypt from
+            # If hashed recipient DOES exist...
+            else:
+                # Query the keys of the person we want to encrypt for/decrypt from
                 response2 = (supabase.table('keys')
                              .select("hashed_user", "public_key")
                              .eq("hashed_user", hashed_recipient)
@@ -201,7 +230,7 @@ class recipientUsernameFrame(customtkinter.CTkFrame):
                 )
 
                 if response2:
-                    #if public key is default:
+                    # If public key is default:
                     if response2.data[0]['public_key'] == "1111":
                         has_keys = False
                         print("User has not logged in before. Please ask them to login, then retry.")
@@ -220,6 +249,7 @@ class recipientUsernameFrame(customtkinter.CTkFrame):
                 else:
                     print("Attempting to retrieve keys for check failed.")
 
+# Main frame that stuff is housed in (encrypt, decrypt, load file buttons and functions)
 class mainProgramFrame(customtkinter.CTkFrame):
     def __init__(self, master, switch_callback):
         super().__init__(master)
@@ -242,21 +272,27 @@ class mainProgramFrame(customtkinter.CTkFrame):
 
     def loadFile(self):
         global data
+
+        # If the user has already encrypted/decrypted and is doing something else, hide alert grid again
+        if first_action == False:
+            self.alert.grid_forget()
+
         print('User is loading file...')
         userfile = filedialog.askopenfilename() #userfile is the path to the file we want to encrypt
         print('User selected file: ', userfile)
 
+        # Delete any newline characters as they will mess with encryption
         with open(userfile, "r") as file:
             data = file.read().replace('\n', ' ')
 
         self.switch_callback() #reveal "enter recipient username" frame
     
     def derive_key(self):
-        #retrieve private key from .pem file
+        # Retrieve private key from .pem file
         with open("my_dh_private_key.pem", "rb") as f:
-            private_key = load_pem_private_key(f.read(), password=password.encode())
+            private_key = load_pem_private_key(f.read(), password=password.encode()) #use user's login password as the password for .pem
         
-        #derive shared key
+        # Derive shared key
         self_shared_key = private_key.exchange(friend_public_key)
         derived_key = HKDF(
             algorithm=hashes.SHA256(),
@@ -269,40 +305,48 @@ class mainProgramFrame(customtkinter.CTkFrame):
         return derived_key
         
     def encrypt(self):
-        global data
+        global data, first_action
 
         if can_preform_action == True:
             print('User chose to encrypt!')
-            #retrieve shared key from Supabase and then derive the actual key we can use
+            
+            # Retrieve shared key from Supabase and then derive the actual key we can use
             d_key = self.derive_key()
             print("Our derived key is: ", d_key)
 
+            start_t = time.time()
             encrypted_data = AES_Encrypt(data, d_key)
-            print(f"encrypted data: {encrypted_data}")
+            stop_t = time.time()
+
+            print(f"Time To Encrypt: {stop_t - start_t} seconds.")
+
             with open("encrypted.txt", "w") as file:
                 file.write(encrypted_data)
             
-            self.action_result("encrypted.txt", "encrypt")
+            first_action = False
+            self.action_result("encrypted.txt", "encrypt") # Show success message
 
         if can_preform_action == False:
             print('CPF is False, likely an invalid friend user')
 
     def decrypt(self):
-        global data
+        global data, first_action
 
         if can_preform_action == True:
             print('User chose to decrypt!')
-            #retrieve shared key from Supabase and then derive the actual key we can use
+
+            # Retrieve shared key from Supabase and then derive the actual key we can use
             d_key = self.derive_key()
             print("Our derived key is: ", d_key)
 
-            chop_char = data[-1] #character representing the amount to chop
-            decrypted_data = AES_Decrypt(data[:-1], d_key) #pass through the whole string (except the last char, that corresponds to amt to chop)
+            chop_char = data[-1] # Character representing the amount to chop
+            decrypted_data = AES_Decrypt(data[:-1], d_key) # Pass through the whole string (except the last char, that corresponds to amount to chop)
             decrypted_data = self.chop_padding(decrypted_data, chop_char)
 
             with open("decrypted.txt", "w") as file:
                 file.write(decrypted_data)
             
+            first_action = False
             self.action_result("decrypted.txt", "decrypt")
 
         if can_preform_action == False:
@@ -318,14 +362,16 @@ class mainProgramFrame(customtkinter.CTkFrame):
             self.alert.configure(text=f"{operation}ion failed.")
             self.alert.grid(row = 2, column = 1)
     
+    # For chopping any padding we had to do for messages that weren't mod 16
     def chop_padding(self, text, amount_to_chop):
-        if amount_to_chop == 'a': #no chopping required
+        if amount_to_chop == 'a': # No chopping required
             return text
         else:
-            chop_amount = trim_bafo.index(amount_to_chop) #use lookup table to find amt to chop (amt is the index)
+            chop_amount = trim_bafo.index(amount_to_chop) # Use lookup table to find amt to chop (amt is the index)
             text = text[:-chop_amount]
             return text
-            
+
+# Base app that everything is built off of
 class App(customtkinter.CTk):
     def __init__(self):
         super().__init__()
@@ -349,10 +395,10 @@ class App(customtkinter.CTk):
     def show_main_frame(self):
         self.login_frame.grid_forget() #hide login panel
         self.mainprogram_frame = mainProgramFrame(self, self.show_recipient_frame)
-        self.mainprogram_frame.grid(row = 0, column = 0, padx=20, pady=(200,0)) #show main program frame
+        self.mainprogram_frame.grid(row = 0, column = 0, padx=20, pady=(200,0)) # Show main program frame
     
     def show_recipient_frame(self):
-        self.recipient_user_frame.grid(row = 1, column = 0, padx=20, pady=(10,0)) #show recipient frame
+        self.recipient_user_frame.grid(row = 1, column = 0, padx=20, pady=(10,0)) # Show recipient frame
         
 app = App()
 app.mainloop()
