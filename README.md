@@ -1,4 +1,4 @@
-# redwood-84 *IN ACTIVE DEVELOPMENT - UNFINISHED*
+# redwood-84
 Python based desktop app for quantum-resistant encryption/decryption of .txt files.
 Encryption is 128bit AES.
 Login verification and retrieving keys is done via Supabase.
@@ -13,3 +13,5 @@ In the Supabase database we store hashed usernames alongside emails. When a user
 login, we hash their username and search the database for it. If it is a valid username,  
 we will retrieve the spoofed email associated with the account and send a login request  
 with the email and password.
+
+<img width="799" alt="rw84 Main Page" src="https://github.com/user-attachments/assets/c5c8dac6-c59e-4f43-8a83-3b36ccfc6c65" />
