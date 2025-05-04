@@ -6,7 +6,6 @@ import hashlib #to hash our usernames
 from supabase import AuthApiError, create_client, Client
 from supabase.client import ClientOptions
 from dotenv import load_dotenv
-from PIL import Image #for using a picture as a background
 import base64
 import time
 
@@ -35,7 +34,7 @@ has_keys = False
 pn = dh.DHParameterNumbers(p, g)
 parameters = pn.parameters()
 
-#get absolute path (needed when bundled into an executable)
+# Get absolute path (needed when bundled into an executable, for theme, .env, .pem files)
 def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS  # PyInstaller temporary folder
@@ -44,16 +43,31 @@ def resource_path(relative_path):
 
     return os.path.join(base_path, relative_path)
 
+# Path for writing our encrypted .txt file
+def get_app_dir():
+    if getattr(sys, 'frozen', False):
+        # PyInstaller bundle
+        return os.path.dirname(sys.executable)
+    else:
+        # Normal script
+        return os.path.dirname(os.path.abspath(__file__))
+
+enc_msg_output_path = os.path.join(get_app_dir(), "encrypted.txt") # Path to WRITE the encrypted message to
+dec_msg_output_path = os.path.join(get_app_dir(), "decrypted.txt") # Path to WRITE the decrypted message to
+pem_key_output_path = os.path.join(get_app_dir(), "my_dh_private_key.pem") # Path to WRITE the .pem to
+
 theme_path = resource_path("marsh.json")
 env_path = resource_path(".env")
+priv_key_pem_path = resource_path("my_dh_private_key.pem") # Path to our .pem file (for reading from it)
 
-#loading .env file and retrieving supabase url + apikey
+# loading .env file and retrieving supabase url + apikey
 load_dotenv(env_path)
 SUPABASE_URL=os.getenv('SUPABASE_URL')
 SUPABASE_KEY=os.getenv('SUPABASE_KEY')
 
 customtkinter.set_appearance_mode("Dark")  # Modes: "System" (standard), "Dark", "Light"
 customtkinter.set_default_color_theme(theme_path)
+
 
 # connect to supabse
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(
@@ -81,7 +95,7 @@ class loginFrame(customtkinter.CTkFrame):
         self.login_button.grid(row = 3, column = 1, padx = 20, pady = 20)
 
     def login(self, email, password):
-        global s_public_key
+        global s_public_key, pem_key_output_path
         try:
             # Try to login
             response = supabase.auth.sign_in_with_password(
@@ -107,7 +121,7 @@ class loginFrame(customtkinter.CTkFrame):
                         self_private_key = parameters.generate_private_key()
 
                         # Write private key to a .pem file
-                        with open("my_dh_private_key.pem", "wb") as f:
+                        with open(pem_key_output_path, "wb") as f:
                             f.write(self_private_key.private_bytes(
                             encoding=serialization.Encoding.PEM,
                             format=serialization.PrivateFormat.PKCS8,
@@ -288,8 +302,9 @@ class mainProgramFrame(customtkinter.CTkFrame):
         self.switch_callback() #reveal "enter recipient username" frame
     
     def derive_key(self):
+        global priv_key_pem_path
         # Retrieve private key from .pem file
-        with open("my_dh_private_key.pem", "rb") as f:
+        with open(priv_key_pem_path, "rb") as f:
             private_key = load_pem_private_key(f.read(), password=password.encode()) #use user's login password as the password for .pem
         
         # Derive shared key
@@ -305,7 +320,7 @@ class mainProgramFrame(customtkinter.CTkFrame):
         return derived_key
         
     def encrypt(self):
-        global data, first_action
+        global data, first_action, enc_msg_output_path
 
         if can_preform_action == True:
             print('User chose to encrypt!')
@@ -320,7 +335,7 @@ class mainProgramFrame(customtkinter.CTkFrame):
 
             print(f"Time To Encrypt: {stop_t - start_t} seconds.")
 
-            with open("encrypted.txt", "w") as file:
+            with open(enc_msg_output_path, "w") as file:
                 file.write(encrypted_data)
             
             first_action = False
@@ -340,10 +355,16 @@ class mainProgramFrame(customtkinter.CTkFrame):
             print("Our derived key is: ", d_key)
 
             chop_char = data[-1] # Character representing the amount to chop
+
+            start_t = time.time()
             decrypted_data = AES_Decrypt(data[:-1], d_key) # Pass through the whole string (except the last char, that corresponds to amount to chop)
+            stop_t = time.time()
+
+            print(f"Time To Decrypt: {stop_t - start_t} seconds.")
+
             decrypted_data = self.chop_padding(decrypted_data, chop_char)
 
-            with open("decrypted.txt", "w") as file:
+            with open(dec_msg_output_path, "w") as file:
                 file.write(decrypted_data)
             
             first_action = False
