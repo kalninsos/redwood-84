@@ -14,12 +14,10 @@ from decryption import AES_Decrypt
 from lookup_tables import trim_bafo
 from parameters import p, g
 
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import dh
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.serialization import load_der_public_key
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from cryptography.hazmat.primitives.serialization import load_der_public_key, load_pem_private_key
 
 username = ""
 password = ""
@@ -31,6 +29,7 @@ first_action = True
 can_preform_action = False
 has_keys = False
 
+# Parameters for key exchange
 pn = dh.DHParameterNumbers(p, g)
 parameters = pn.parameters()
 
@@ -52,13 +51,14 @@ def get_app_dir():
         # Normal script
         return os.path.dirname(os.path.abspath(__file__))
 
+# When bundled with PyInstaller, below paths are dist/gui
 enc_msg_output_path = os.path.join(get_app_dir(), "encrypted.txt") # Path to WRITE the encrypted message to
 dec_msg_output_path = os.path.join(get_app_dir(), "decrypted.txt") # Path to WRITE the decrypted message to
-pem_key_output_path = os.path.join(get_app_dir(), "my_dh_private_key.pem") # Path to WRITE the .pem to
+pem_key_path = os.path.join(get_app_dir(), "my_dh_private_key.pem") # Path to WRITE the .pem to
 
+# When bundled with PyInstaller, below paths are dist/gui/_internal
 theme_path = resource_path("marsh.json")
 env_path = resource_path(".env")
-priv_key_pem_path = resource_path("my_dh_private_key.pem") # Path to our .pem file (for reading from it)
 
 # loading .env file and retrieving supabase url + apikey
 load_dotenv(env_path)
@@ -95,7 +95,7 @@ class loginFrame(customtkinter.CTkFrame):
         self.login_button.grid(row = 3, column = 1, padx = 20, pady = 20)
 
     def login(self, email, password):
-        global s_public_key, pem_key_output_path
+        global s_public_key, pem_key_path
         try:
             # Try to login
             response = supabase.auth.sign_in_with_password(
@@ -121,7 +121,7 @@ class loginFrame(customtkinter.CTkFrame):
                         self_private_key = parameters.generate_private_key()
 
                         # Write private key to a .pem file
-                        with open(pem_key_output_path, "wb") as f:
+                        with open(pem_key_path, "wb") as f:
                             f.write(self_private_key.private_bytes(
                             encoding=serialization.Encoding.PEM,
                             format=serialization.PrivateFormat.PKCS8,
@@ -302,9 +302,10 @@ class mainProgramFrame(customtkinter.CTkFrame):
         self.switch_callback() #reveal "enter recipient username" frame
     
     def derive_key(self):
-        global priv_key_pem_path
+        global pem_key_path #used to be priv_key_pem_path
+
         # Retrieve private key from .pem file
-        with open(priv_key_pem_path, "rb") as f:
+        with open(pem_key_path, "rb") as f:
             private_key = load_pem_private_key(f.read(), password=password.encode()) #use user's login password as the password for .pem
         
         # Derive shared key
